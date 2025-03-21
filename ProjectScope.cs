@@ -1,4 +1,5 @@
 using System.Collections.Generic;
+using Fractural.Tasks.Triggers;
 using TanitakaTech.NestedDIContainer;
 
 namespace NestedDIContainer.Godot;
@@ -7,32 +8,13 @@ public abstract partial class ProjectScope : NodeScope
 {
     internal static NodeScopeBase ParentNodeScope =>
         _temporaryParentScopeId.HasValue
-            ? NestedScopes.Get(_temporaryParentScopeId.Value) as NodeScopeBase
+            ? GlobalProjectScope.Scopes[_temporaryParentScopeId.Value] as NodeScopeBase
             : Scope;
     internal static ProjectScope Scope => _scope;
     protected static ProjectScope _scope;
 
-    internal static NestedScopes NestedScopes
-    {
-        get
-        {
-            _nestedScopes ??= new NestedScopes(new Dictionary<ScopeId, IScope>());
-            return _nestedScopes;
-        }
-    }
+    internal static List<IAsyncInitializer> Initializers { get; } = new ();
 
-    private static NestedScopes _nestedScopes;
-
-    internal static Modules Modules
-    {
-        get
-        {
-            _modules ??= new Modules(new Dictionary<ModuleRelation, object>(), NestedScopes);
-            return _modules;
-        }
-    }
-
-    private static Modules _modules;
     public static ScopeId? TemporaryParentScopeId => _temporaryParentScopeId;
     private static ScopeId? _temporaryParentScopeId = null;
     public static void SetTemporaryParentScopeId(ScopeId? parentScopeId)
@@ -58,13 +40,12 @@ public abstract partial class ProjectScope : NodeScope
     {
         _scope = this;
         ScopeId = ScopeId.Create();
-        _scope.InitializeScope(ScopeId, ScopeId.Create());
+        ConstructScope(ScopeId, ScopeId.Create());
     }
 
-    protected void OnDestroy()
+    public override void _ExitTree()
     {
-        _nestedScopes = null;
-        _modules = null;
+        GlobalProjectScope.Dispose();
         _scope = null;
         _tempConfig = null;
     }

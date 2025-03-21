@@ -21,9 +21,8 @@ public abstract partial class NodeScopeWithConfig<TConfig> : NodeScopeBase
     {
         // Init ScopeId
         ScopeId = ScopeId.Create();
-        _parentNodeScope ??= ProjectScope.ParentNodeScope;
+        _parentNodeScope ??= ProjectScope.Scope ?? ProjectScope.ParentNodeScope;
         ParentScopeId = ScopeId.Equals(_parentNodeScope.ScopeId) ? ScopeId.Create() : _parentNodeScope.ScopeId;
-
-        InitializeScope(ScopeId, ParentScopeId.Value, ProjectScope.PopConfig());
+        ConstructScope(ScopeId, ParentScopeId.Value, optionExtendScope: null);
     }
 }

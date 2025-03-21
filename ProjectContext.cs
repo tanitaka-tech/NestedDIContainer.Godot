@@ -1,5 +1,4 @@
 using Godot;
-using NestedDIContainer.Godot.DefaultDependencies;
 using TanitakaTech.NestedDIContainer;
 
 namespace NestedDIContainer.Godot;
@@ -13,11 +12,10 @@ public partial class ProjectContext : ProjectScope
         _scope = this;
 
         ScopeId = ScopeId.Create();
-        _scope.InitializeScope(ScopeId, ScopeId.Create());
+        ConstructScope(ScopeId, ScopeId.Create(), optionExtendScope: new ProjectScopeDefaultExtendScope(this));
     }
 
     protected override void Construct(DependencyBinder binder)
     {
-        binder.Bind<INodeFactory>(new NodeFactory());
     }
 }

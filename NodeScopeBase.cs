@@ -1,70 +1,181 @@
-using System;
-using System.Collections.Generic;
-using System.Reflection;
+using System.Linq;
+using Fractural.Tasks;
+using Fractural.Tasks.Triggers;
 using Godot;
-using NestedDIContainer.Unity.Runtime;
+using NestedDIContainer.Godot.DefaultDependencies;
 using TanitakaTech.NestedDIContainer;
 
 namespace NestedDIContainer.Godot;
 
-public abstract partial class NodeScopeBase : Node, IScope
+public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFactory
 {
-    private const BindingFlags MemberBindingFlags =
-        BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance | BindingFlags.DeclaredOnly;
+    //[Export] protected List<ScriptableObjectExtendScope> _extendScopes;
+
     public ScopeId? ParentScopeId { get; set; }
     public ScopeId ScopeId { get; set; }
 
     void IScope.Construct(DependencyBinder binder, object config)
     {
         Construct(binder, config);
-        RecursiveConstruct(this, binder, this);
-
-        void RecursiveConstruct(Node node, DependencyBinder binder, IScope parentScope)
-        {
-            foreach (var child in node.GetChildren())
-            {
-                bool isNotNodeScopeBase = !(child is NodeScopeBase);
-                if (child is IScope scope && isNotNodeScopeBase && scope.ParentScopeId == null)
-                {
-                    scope.ParentScopeId = parentScope.ScopeId;
-                    Inject(scope, scope.ParentScopeId.Value);
-                    scope.Construct(binder, null);
-                    RecursiveConstruct(child, binder, scope);
-                }
-                else if (isNotNodeScopeBase)
-                {
-                    RecursiveConstruct(child, binder, parentScope);
-                }
-            }
-        }
     }
 
     protected abstract void Construct(DependencyBinder binder, object config);
 
-    void IScope.Initialize()
+    internal void ConstructScope(ScopeId scopeId, ScopeId parentScopeId, object config = null, IExtendScope optionExtendScope = null)
     {
-        Initialize();
-        RecursiveInitialize(this);
+        ScopeId = scopeId;
+        ParentScopeId = parentScopeId;
+        GlobalProjectScope.Scopes.Add(scopeId, this);
 
-        void RecursiveInitialize(Node node)
+        var childBinder = new DependencyBinder(scopeId);
+        if (optionExtendScope != null)
         {
-            foreach (var child in node.GetChildren())
+            childBinder.ExtendScope(optionExtendScope);
+        }
+        // foreach (var extendScope in _extendScopes)
+        // {
+        //     Inject(extendScope, this);
+        //     childBinder.ExtendScope(extendScope, this);
+        // }
+
+        GlobalProjectScope.Inject(this, this);
+        IScope scope = this;
+        scope.Construct(childBinder, config);
+
+        var cancellationTokenOnDestroy = this.GetCancellationTokenOnDestroy();
+        if (this is IAsyncInitializer asyncInitializer)
+        {
+            var parentScope = scope;
+            IAsyncInitializer parentAsyncInitializer = null;
+            ProjectScope.Initializers.Add(asyncInitializer);
+
+            while (!parentScope.ParentScopeId.Equals(ProjectScope.Scope.ParentScopeId))
             {
-                bool isNotNodeScopeBase = !(child is NodeScopeBase);
-                if (child is IScope scope && isNotNodeScopeBase)
+                GlobalProjectScope.Scopes.TryGetValue(parentScope.ParentScopeId.Value, out parentScope);
+                if (parentScope is IAsyncInitializer parent)
                 {
-                    scope.Initialize();
-                }
-                if (isNotNodeScopeBase)
-                {
-                    RecursiveInitialize(child);
+                    parentAsyncInitializer = parent;
+                    break;
                 }
             }
+
+            this.ReadyAsync()
+                .ContinueWith(async () =>
+                {
+                    if (parentAsyncInitializer != null)
+                    {
+                        await GDTask.WaitWhile(() => ProjectScope.Initializers.Any(x => x == parentAsyncInitializer),
+                            cancellationToken: cancellationTokenOnDestroy);
+                    }
+
+                    await asyncInitializer.InitializeAsync(cancellationTokenOnDestroy);
+                    ProjectScope.Initializers.Remove(asyncInitializer);
+                })
+                .Forget();
+        }
+
+        cancellationTokenOnDestroy.Register(() =>
+        {
+            GlobalProjectScope.Scopes.Remove(scopeId);
+            GlobalProjectScope.Modules.RemoveScope(scopeId);
+        });
+
+        InjectOrInitializeChildrenRecursive(this);
+    }
+
+    internal void ConstructScope(IScope targetScope, ScopeId scopeId, ScopeId parentScopeId, object config = null, IExtendScope optionExtendScope = null)
+    {
+        targetScope.ScopeId = scopeId;
+        targetScope.ParentScopeId = parentScopeId;
+        GlobalProjectScope.Scopes.Add(scopeId, targetScope);
+
+        var childBinder = new DependencyBinder(scopeId);
+        if (optionExtendScope != null)
+        {
+            childBinder.ExtendScope(optionExtendScope);
+        }
+        // foreach (var extendScope in _extendScopes)
+        // {
+        //     GlobalProjectScope.Inject(extendScope, targetScope);
+        //     childBinder.ExtendScope(extendScope);
+        // }
+
+        GlobalProjectScope.Inject(targetScope, targetScope);
+        targetScope.Construct(childBinder, config);
+        var targetNode = targetScope as Node;
+
+        var cancellationTokenOnDestroy = targetNode.GetCancellationTokenOnDestroy();
+        if (targetScope is IAsyncInitializer asyncInitializer)
+        {
+            var parentScope = targetScope;
+            IAsyncInitializer parentAsyncInitializer = null;
+            ProjectScope.Initializers.Add(asyncInitializer);
+
+            while (!parentScope.ParentScopeId.Equals(ProjectScope.Scope.ParentScopeId))
+            {
+                GlobalProjectScope.Scopes.TryGetValue(parentScope.ParentScopeId.Value, out parentScope);
+                if (parentScope is IAsyncInitializer parent)
+                {
+                    parentAsyncInitializer = parent;
+                    break;
+                }
+            }
+
+            targetNode.ReadyAsync()
+                .ContinueWith(async () =>
+                {
+                    if (parentAsyncInitializer != null)
+                    {
+                        await GDTask.WaitWhile(() => ProjectScope.Initializers.Any(x => x == parentAsyncInitializer),
+                            cancellationToken: cancellationTokenOnDestroy);
+                    }
+
+                    await asyncInitializer.InitializeAsync(cancellationTokenOnDestroy);
+                    ProjectScope.Initializers.Remove(asyncInitializer);
+                })
+                .Forget();
+        }
+
+        cancellationTokenOnDestroy.Register(() =>
+        {
+            GlobalProjectScope.Scopes.Remove(scopeId);
+            GlobalProjectScope.Modules.RemoveScope(scopeId);
+        });
+
+        var children = targetNode.GetChildren();
+        for (int i = 0; i < children.Count; i++)
+        {
+            InjectOrInitializeChildrenRecursive(children[i]);
         }
     }
 
-    protected virtual void Initialize() { }
+    private void InjectOrInitializeChildrenRecursive(Node current)
+    {
+        var injectable = current as IInjectable;
+        if (injectable == null)
+        {
+            return;
+        }
 
+        if (injectable is IScope scope && scope != this)
+        {
+            var scopeId = ScopeId.Create();
+            ConstructScope(scope, scopeId: scopeId, parentScopeId: ScopeId);
+            return;
+        }
+        else
+        {
+            GlobalProjectScope.Inject(injectableObject: injectable, scope: this);
+        }
+
+        var children = current.GetChildren();
+        for (int i = 0; i < children.Count; i++)
+        {
+            InjectOrInitializeChildrenRecursive(children[i]);
+        }
+    }
+
+    // implement INodeScopeFactory
     public T Instantiate<T>(PackedScene packedScene, Node parent, object config = null) where T : Node
     {
         if (packedScene == null)
@@ -79,9 +190,10 @@ public abstract partial class NodeScopeBase : Node, IScope
             GD.PrintErr($"The scene does not contain a node of type {typeof(T).Name}.");
             return null;
         }
+
         if (instance is IScope scope)
         {
-            InitializeScope(scope, ScopeId.Create(), ScopeId, config);
+            ConstructScope(scope, ScopeId.Create(), ScopeId, config);
             parent.AddChild(instance);
         }
         else
@@ -91,6 +203,7 @@ public abstract partial class NodeScopeBase : Node, IScope
             parent.AddChild(instance);
             ProjectScope.SetTemporaryParentScopeId(null);
         }
+
         return instance;
     }
 
@@ -114,68 +227,18 @@ public abstract partial class NodeScopeBase : Node, IScope
             GD.PrintErr($"The scene does not contain a node of type {typeof(T).Name}.");
             return null;
         }
+
         if (instance is IScope scope)
         {
-            InitializeScope(scope, ScopeId.Create(), ScopeId, config);
+            ConstructScope(scope, ScopeId.Create(), ScopeId, config);
         }
 
         ProjectScope.SetTemporaryParentScopeId(null);
         return (T)instance.GetNode<T>(instance.GetPath());
     }
 
-    public NodeScopeWithConfig<TConfig> InstantiateWithConfig<TConfig>(PackedScene packedScene, TConfig config,
-        Node parent) where TConfig : class
+    public NodeScopeWithConfig<TConfig> InstantiateWithConfig<TConfig>(PackedScene packedScene, TConfig config, Node parent) where TConfig : class
     {
         return Instantiate<NodeScopeWithConfig<TConfig>>(packedScene, parent, config);
-    }
-
-    internal void InitializeScope(ScopeId scopeId, ScopeId parentScopeId, object config = null)
-    {
-        InitializeScope(this, scopeId, parentScopeId, config);
-    }
-
-    internal void InitializeScope(IScope scope, ScopeId scopeId, ScopeId parentScopeId, object config = null)
-    {
-        scope.ScopeId = scopeId;
-        scope.ParentScopeId = parentScopeId;
-        var childBoundTypes = new List<Type>();
-        var childBinder = new DependencyBinder(ProjectScope.Modules, scopeId, ref childBoundTypes);
-
-        ProjectScope.NestedScopes.Add(scopeId, this);
-        Inject(scope, parentScopeId);
-        scope.Construct(childBinder, config);
-        scope.Initialize();
-
-        // Nodeが削除された時にScopeを削除する
-        TreeExited += () =>
-        {
-            ProjectScope.NestedScopes.Remove(scopeId);
-            childBoundTypes.ForEach(type => ProjectScope.Modules.Remove(scopeId, type));
-            childBoundTypes.Clear();
-        };
-    }
-
-    private void Inject(IScope scope, ScopeId scopeId)
-    {
-        var type = scope.GetType();
-        var fields = type.GetFields(MemberBindingFlags);
-        foreach (var field in fields)
-        {
-            var injectAttr = field.GetCustomAttribute<InjectAttribute>();
-            if (injectAttr != null)
-            {
-                field.SetValue(scope, ProjectScope.Modules.Resolve(field.FieldType, scopeId));
-            }
-        }
-
-        var props = type.GetProperties(MemberBindingFlags);
-        foreach (var prop in props)
-        {
-            var injectAttr = prop.GetCustomAttribute<InjectAttribute>();
-            if (injectAttr != null)
-            {
-                prop.SetValue(scope, ProjectScope.Modules.Resolve(prop.PropertyType, scopeId));
-            }
-        }
     }
 }
