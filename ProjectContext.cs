@@ -9,10 +9,7 @@ public partial class ProjectContext : ProjectScope
 
     public override void _EnterTree()
     {
-        _scope = this;
-
-        ScopeId = ScopeId.Create();
-        ConstructScope(ScopeId, ScopeId.Create(), optionExtendScope: new ProjectScopeDefaultExtendScope(this));
+        ConstructScope(ScopeId.Create(), parentScopeContainer: null, optionExtendScope: new ProjectScopeDefaultExtendScope(this));
     }
 
     protected override void Construct(DependencyBinder binder)

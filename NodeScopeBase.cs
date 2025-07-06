@@ -11,8 +11,10 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
 {
     //[Export] protected List<ScriptableObjectExtendScope> _extendScopes;
 
-    public ScopeId? ParentScopeId { get; set; }
-    public ScopeId ScopeId { get; set; }
+    public ScopeId ScopeId { get; private set; }
+    public IScope ParentScope => ScopeContainer.ParentScope;
+    public ScopeContainer ScopeContainer { get; set; }
+
 
     void IScope.Construct(DependencyBinder binder, object config)
     {
@@ -21,13 +23,12 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
 
     protected abstract void Construct(DependencyBinder binder, object config);
 
-    internal void ConstructScope(ScopeId scopeId, ScopeId parentScopeId, object config = null, IExtendScope optionExtendScope = null)
+    internal void ConstructScope(ScopeId scopeId, ScopeContainer parentScopeContainer, object config = null, IExtendScope optionExtendScope = null)
     {
         ScopeId = scopeId;
-        ParentScopeId = parentScopeId;
-        GlobalProjectScope.Scopes.Add(scopeId, this);
+        ScopeContainer = new ScopeContainer(this, parentScopeContainer);
 
-        var childBinder = new DependencyBinder(scopeId);
+        var childBinder = new DependencyBinder(ScopeContainer);
         if (optionExtendScope != null)
         {
             childBinder.ExtendScope(optionExtendScope);
@@ -38,7 +39,7 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
         //     childBinder.ExtendScope(extendScope, this);
         // }
 
-        GlobalProjectScope.Inject(this, this);
+        ScopeContainer.Inject(this);
         IScope scope = this;
         scope.Construct(childBinder, config);
 
@@ -49,9 +50,9 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
             IAsyncInitializer parentAsyncInitializer = null;
             ProjectScope.Initializers.Add(asyncInitializer);
 
-            while (!parentScope.ParentScopeId.Equals(ProjectScope.Scope.ParentScopeId))
+            while (parentScope.ParentScope !=  ProjectScope.Scope.ParentScope)
             {
-                GlobalProjectScope.Scopes.TryGetValue(parentScope.ParentScopeId.Value, out parentScope);
+                parentScope = parentScope.ParentScope;
                 if (parentScope is IAsyncInitializer parent)
                 {
                     parentAsyncInitializer = parent;
@@ -62,34 +63,23 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
             this.ReadyAsync()
                 .ContinueWith(async () =>
                 {
-                    if (parentAsyncInitializer != null)
+                    if (parentAsyncInitializer != null && ProjectScope.Initializers.Any(x => x == parentAsyncInitializer))
                     {
-                        await GDTask.WaitWhile(() => ProjectScope.Initializers.Any(x => x == parentAsyncInitializer),
-                            cancellationToken: cancellationTokenOnDestroy);
+                        await GDTask.WaitWhile(() => ProjectScope.Initializers.Any(x => x == parentAsyncInitializer), cancellationToken: cancellationTokenOnDestroy);
                     }
-
                     await asyncInitializer.InitializeAsync(cancellationTokenOnDestroy);
                     ProjectScope.Initializers.Remove(asyncInitializer);
                 })
                 .Forget();
         }
 
-        cancellationTokenOnDestroy.Register(() =>
-        {
-            GlobalProjectScope.Scopes.Remove(scopeId);
-            GlobalProjectScope.Modules.RemoveScope(scopeId);
-        });
-
         InjectOrInitializeChildrenRecursive(this);
     }
 
-    internal void ConstructScope(IScope targetScope, ScopeId scopeId, ScopeId parentScopeId, object config = null, IExtendScope optionExtendScope = null)
+    internal void ConstructScope(IScope targetScope, ScopeId scopeId, ScopeContainer parentScopeContainer, object config = null, IExtendScope optionExtendScope = null)
     {
-        targetScope.ScopeId = scopeId;
-        targetScope.ParentScopeId = parentScopeId;
-        GlobalProjectScope.Scopes.Add(scopeId, targetScope);
-
-        var childBinder = new DependencyBinder(scopeId);
+        targetScope.ScopeContainer = new ScopeContainer(this, parentScopeContainer);
+        var childBinder = new DependencyBinder(targetScope.ScopeContainer);
         if (optionExtendScope != null)
         {
             childBinder.ExtendScope(optionExtendScope);
@@ -100,9 +90,10 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
         //     childBinder.ExtendScope(extendScope);
         // }
 
-        GlobalProjectScope.Inject(targetScope, targetScope);
-        targetScope.Construct(childBinder, config);
         var targetNode = targetScope as Node;
+        ScopeContainer.Inject(targetScope);
+        IScope scope = this;
+        scope.Construct(childBinder, config);
 
         var cancellationTokenOnDestroy = targetNode.GetCancellationTokenOnDestroy();
         if (targetScope is IAsyncInitializer asyncInitializer)
@@ -111,9 +102,9 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
             IAsyncInitializer parentAsyncInitializer = null;
             ProjectScope.Initializers.Add(asyncInitializer);
 
-            while (!parentScope.ParentScopeId.Equals(ProjectScope.Scope.ParentScopeId))
+            while (parentScope.ParentScope != ProjectScope.Scope.ParentScope)
             {
-                GlobalProjectScope.Scopes.TryGetValue(parentScope.ParentScopeId.Value, out parentScope);
+                parentScope = parentScope.ParentScope;
                 if (parentScope is IAsyncInitializer parent)
                 {
                     parentAsyncInitializer = parent;
@@ -124,23 +115,15 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
             targetNode.ReadyAsync()
                 .ContinueWith(async () =>
                 {
-                    if (parentAsyncInitializer != null)
+                    if (parentAsyncInitializer != null && ProjectScope.Initializers.Any(x => x == parentAsyncInitializer))
                     {
-                        await GDTask.WaitWhile(() => ProjectScope.Initializers.Any(x => x == parentAsyncInitializer),
-                            cancellationToken: cancellationTokenOnDestroy);
+                        await GDTask.WaitWhile(() => ProjectScope.Initializers.Any(x => x == parentAsyncInitializer), cancellationToken: cancellationTokenOnDestroy);
                     }
-
                     await asyncInitializer.InitializeAsync(cancellationTokenOnDestroy);
                     ProjectScope.Initializers.Remove(asyncInitializer);
                 })
                 .Forget();
         }
-
-        cancellationTokenOnDestroy.Register(() =>
-        {
-            GlobalProjectScope.Scopes.Remove(scopeId);
-            GlobalProjectScope.Modules.RemoveScope(scopeId);
-        });
 
         var children = targetNode.GetChildren();
         for (int i = 0; i < children.Count; i++)
@@ -151,27 +134,42 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
 
     private void InjectOrInitializeChildrenRecursive(Node current)
     {
+        DynamicInjectOrInitializeChildrenRecursive(current);
+    }
+
+    private void DynamicInjectOrInitializeChildrenRecursive(Node current)
+    {
         var injectable = current as IInjectable;
         if (injectable == null)
         {
             return;
         }
 
-        if (injectable is IScope scope && scope != this)
+        bool needToInjectChildren = true;
+        if (injectable is NodeScopeBase nodeScopeBase && nodeScopeBase != this)
         {
             var scopeId = ScopeId.Create();
-            ConstructScope(scope, scopeId: scopeId, parentScopeId: ScopeId);
-            return;
+            nodeScopeBase.ConstructScope(scopeId: scopeId, parentScopeContainer: ScopeContainer);
+            needToInjectChildren = false;
+        }
+        else if (injectable is IScope scope)
+        {
+            ScopeContainer.Inject(injectable);
+            ConstructScope(scope, scopeId: ScopeId.Create(), parentScopeContainer: ScopeContainer);
         }
         else
         {
-            GlobalProjectScope.Inject(injectableObject: injectable, scope: this);
+            ScopeContainer.Inject(injectable);
+        }
+        if (!needToInjectChildren)
+        {
+            return;
         }
 
         var children = current.GetChildren();
         for (int i = 0; i < children.Count; i++)
         {
-            InjectOrInitializeChildrenRecursive(children[i]);
+            DynamicInjectOrInitializeChildrenRecursive(children[i]);
         }
     }
 
@@ -193,15 +191,15 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
 
         if (instance is IScope scope)
         {
-            ConstructScope(scope, ScopeId.Create(), ScopeId, config);
+            ConstructScope(scope, ScopeId.Create(), ScopeContainer, config);
             parent.AddChild(instance);
         }
         else
         {
-            ProjectScope.SetTemporaryParentScopeId(ScopeId);
+            ProjectScope.PushParentScope(this);
             ProjectScope.PushConfig(config);
             parent.AddChild(instance);
-            ProjectScope.SetTemporaryParentScopeId(null);
+            ProjectScope.PopParentScope();
         }
 
         return instance;
@@ -219,7 +217,7 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
             return null;
         }
 
-        ProjectScope.SetTemporaryParentScopeId(ScopeId);
+        ProjectScope.PushParentScope(this);
         ProjectScope.PushConfig(config);
         var instance = instancePlaceholder.CreateInstance();
         if (instance == null)
@@ -230,10 +228,10 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
 
         if (instance is IScope scope)
         {
-            ConstructScope(scope, ScopeId.Create(), ScopeId, config);
+            ConstructScope(scope, ScopeId.Create(), ScopeContainer, config);
         }
 
-        ProjectScope.SetTemporaryParentScopeId(null);
+        ProjectScope.PopParentScope();
         return (T)instance.GetNode<T>(instance.GetPath());
     }
 

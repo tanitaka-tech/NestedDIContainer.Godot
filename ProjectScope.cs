@@ -1,26 +1,16 @@
 using System.Collections.Generic;
-using Fractural.Tasks.Triggers;
 using TanitakaTech.NestedDIContainer;
 
 namespace NestedDIContainer.Godot;
 
 public abstract partial class ProjectScope : NodeScope
 {
-    internal static NodeScopeBase ParentNodeScope =>
-        _temporaryParentScopeId.HasValue
-            ? GlobalProjectScope.Scopes[_temporaryParentScopeId.Value] as NodeScopeBase
-            : Scope;
-    internal static ProjectScope Scope => _scope;
-    protected static ProjectScope _scope;
+    internal static ProjectScope Scope => _projectScope;
+    private static ProjectScope _projectScope;
+    private static object _tempConfig = null;
+    private static IScope _tempParent = null;
 
-    internal static List<IAsyncInitializer> Initializers { get; } = new ();
-
-    public static ScopeId? TemporaryParentScopeId => _temporaryParentScopeId;
-    private static ScopeId? _temporaryParentScopeId = null;
-    public static void SetTemporaryParentScopeId(ScopeId? parentScopeId)
-    {
-        _temporaryParentScopeId = parentScopeId;
-    }
+    internal static readonly List<IAsyncInitializer> Initializers = new ();
 
     internal static object PopConfig()
     {
@@ -34,19 +24,27 @@ public abstract partial class ProjectScope : NodeScope
         _tempConfig = config;
     }
 
-    private static object _tempConfig = null;
+    internal static IScope PopParentScope()
+    {
+        var temp = _tempParent;
+        _tempParent = null;
+        return temp;
+    }
+    internal static void PushParentScope(IScope parentScope)
+    {
+        _tempParent = parentScope;
+    }
 
     public override void _EnterTree()
     {
-        _scope = this;
-        ScopeId = ScopeId.Create();
-        ConstructScope(ScopeId, ScopeId.Create());
+        _projectScope = this;
+        ConstructScope(ScopeId.Create(), null);
     }
 
     public override void _ExitTree()
     {
-        GlobalProjectScope.Dispose();
-        _scope = null;
         _tempConfig = null;
+        _tempParent = null;
+        _projectScope = null;
     }
 }

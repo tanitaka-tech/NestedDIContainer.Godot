@@ -23,7 +23,7 @@ public partial class ProjectContextLoadNode : Node
             }
             else
             {
-                GD.Print(　$"ScenePath is not found: {scenePath}");
+                GD.Print($"ScenePath is not found: {scenePath}");
             }
         }
     }
