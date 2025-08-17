@@ -73,7 +73,11 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
                 .Forget();
         }
 
-        InjectOrInitializeChildrenRecursive(this);
+        var children = GetChildren();
+        for (int i = 0; i < children.Count; i++)
+        {
+            InjectOrInitializeChildrenRecursive(children[i]);
+        }
     }
 
     internal void ConstructScope(IScope targetScope, ScopeId scopeId, ScopeContainer parentScopeContainer, object config = null, IExtendScope optionExtendScope = null)
@@ -92,8 +96,10 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
 
         var targetNode = targetScope as Node;
         ScopeContainer.Inject(targetScope);
-        IScope scope = this;
-        scope.Construct(childBinder, config);
+        if (targetScope != this)
+        {
+            targetScope.Construct(childBinder, config);
+        }
 
         var cancellationTokenOnDestroy = targetNode.GetCancellationTokenOnDestroy();
         if (targetScope is IAsyncInitializer asyncInitializer)
