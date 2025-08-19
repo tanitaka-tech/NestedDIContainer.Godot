@@ -146,30 +146,28 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
     private void DynamicInjectOrInitializeChildrenRecursive(Node current)
     {
         var injectable = current as IInjectable;
-        if (injectable == null)
+        if (injectable != null)
         {
-            return;
-        }
-
-        bool needToInjectChildren = true;
-        if (injectable is NodeScopeBase nodeScopeBase && nodeScopeBase != this)
-        {
-            var scopeId = ScopeId.Create();
-            nodeScopeBase.ConstructScope(scopeId: scopeId, parentScopeContainer: ScopeContainer);
-            needToInjectChildren = false;
-        }
-        else if (injectable is IScope scope)
-        {
-            ScopeContainer.Inject(injectable);
-            ConstructScope(scope, scopeId: ScopeId.Create(), parentScopeContainer: ScopeContainer);
-        }
-        else
-        {
-            ScopeContainer.Inject(injectable);
-        }
-        if (!needToInjectChildren)
-        {
-            return;
+            bool needToInjectChildren = true;
+            if (injectable is NodeScopeBase nodeScopeBase && nodeScopeBase != this)
+            {
+                var scopeId = ScopeId.Create();
+                nodeScopeBase.ConstructScope(scopeId: scopeId, parentScopeContainer: ScopeContainer);
+                needToInjectChildren = false;
+            }
+            else if (injectable is IScope scope)
+            {
+                ScopeContainer.Inject(injectable);
+                ConstructScope(scope, scopeId: ScopeId.Create(), parentScopeContainer: ScopeContainer);
+            }
+            else
+            {
+                ScopeContainer.Inject(injectable);
+            }
+            if (!needToInjectChildren)
+            {
+                return;
+            }
         }
 
         var children = current.GetChildren();
