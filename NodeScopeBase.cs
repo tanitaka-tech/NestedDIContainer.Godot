@@ -25,6 +25,12 @@ public abstract partial class NodeScopeBase : Node, IScope, IChildSceneScopeFact
 
     internal void ConstructScope(ScopeId scopeId, ScopeContainer parentScopeContainer, object config = null, IExtendScope optionExtendScope = null)
     {
+        bool isAlreadyConstructed = ScopeContainer != null;
+        if (isAlreadyConstructed)
+        {
+            return;
+        }
+
         ScopeId = scopeId;
         ScopeContainer = new ScopeContainer(this, parentScopeContainer);
 
